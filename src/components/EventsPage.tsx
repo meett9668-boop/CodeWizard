@@ -1,16 +1,27 @@
 import React, { useState } from 'react';
 import { EventItem } from '../types';
-import { Bookmark, Clock, MapPin, Users, ArrowRight, Sparkles } from 'lucide-react';
+import { Bookmark, Clock, MapPin, Users, ArrowRight, Sparkles, Search } from 'lucide-react';
 import { Card, Badge, Button, Table, TableHead } from './ui';
 
 interface EventsPageProps {
   events: EventItem[];
   onNavigate: (view: string, id?: string) => void;
   onOpenRegisterModal: (event: EventItem) => void;
+  initialSearch?: string;
+  onSearchChange?: (val: string) => void;
 }
 
-export const EventsPage: React.FC<EventsPageProps> = ({ events, onNavigate, onOpenRegisterModal }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+export const EventsPage: React.FC<EventsPageProps> = ({ events, onNavigate, onOpenRegisterModal, initialSearch = '', onSearchChange }) => {
+  const [searchTerm, setSearchTerm] = useState(initialSearch);
+
+  React.useEffect(() => {
+    setSearchTerm(initialSearch);
+  }, [initialSearch]);
+
+  const handleSearchTermChange = (val: string) => {
+    setSearchTerm(val);
+    if (onSearchChange) onSearchChange(val);
+  };
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
 
@@ -66,8 +77,20 @@ export const EventsPage: React.FC<EventsPageProps> = ({ events, onNavigate, onOp
           </p>
         </div>
 
-        {/* Filter Pills */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Search Input & Filter Pills */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="relative w-full sm:w-64">
+            <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search by title, topic..."
+              value={searchTerm}
+              onChange={(e) => handleSearchTermChange(e.target.value)}
+              className="w-full pl-9 pr-3 search-input-pill"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
           {categories.map((cat) => (
             <button
               key={cat}
@@ -77,6 +100,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({ events, onNavigate, onOp
               {cat}
             </button>
           ))}
+          </div>
         </div>
       </div>
 

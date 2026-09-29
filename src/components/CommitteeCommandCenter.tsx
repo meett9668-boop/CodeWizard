@@ -17,12 +17,16 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line
 } from 'recharts';
 import { LeadershipPromotions } from './LeadershipPromotions';
+import { canAccessCommandCenter, canAccessCommandTab, canCreateEvent, canPublishEvent, canFacultyApprove, canCommitteeReviewEvent, canManageProjects, canManageMembers, canCreateAnnouncement, canAssignTasks, canSignHandover, isFaculty } from '../utils/permissions';
+import { manualDownloadTicket, printTicketPass } from '../utils/ticketGenerator';
+import { PromotionRequest, UserSession } from '../types';
 
 interface CommandCenterProps {
   currentTab: string;
   onNavigateTab: (tab: string) => void;
   currentUserRole: Role;
-  onChangeRole: (role: Role) => void;
+  currentUserName?: string;
+  currentUserAvatar?: string;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
   members: Member[];
@@ -40,7 +44,12 @@ interface CommandCenterProps {
   notifications: NotificationItem[];
   onMarkNotificationRead: (id: string) => void;
   promotionHistory: PromotionHistory[];
+  promotionRequests: PromotionRequest[];
   onPromoteMember: (member: Member) => void;
+  onApprovePromotionRequest: (reqId: string, remarks?: string) => void;
+  onFacultyApprovePromotion: (reqId: string, remarks?: string) => void;
+  onRejectPromotionRequest: (reqId: string, remarks?: string) => void;
+  onTriggerReAuth?: (actionName: string, desc: string, onVerified: () => void) => void;
   tasks: CommitteeTask[];
   onUpdateTaskStatus: (taskId: string, status: CommitteeTask['status']) => void;
   onCreateTask: (task: CommitteeTask) => void;
@@ -48,13 +57,15 @@ interface CommandCenterProps {
   onCreateHandoverRecord: (record: CommitteeHandoverRecord) => void;
   activities: ActivityItem[];
   onLogout: () => void;
+  onResetData?: () => void;
 }
 
 export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
   currentTab,
   onNavigateTab,
   currentUserRole,
-  onChangeRole,
+  currentUserName = 'Committee Member',
+  currentUserAvatar,
   theme,
   onToggleTheme,
   members,
@@ -72,14 +83,20 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
   notifications,
   onMarkNotificationRead,
   promotionHistory,
+  promotionRequests,
   onPromoteMember,
+  onApprovePromotionRequest,
+  onFacultyApprovePromotion,
+  onRejectPromotionRequest,
+  onTriggerReAuth,
   tasks,
   onUpdateTaskStatus,
   onCreateTask,
   handoverRecords,
   onCreateHandoverRecord,
   activities,
-  onLogout
+  onLogout,
+  onResetData
 }) => {
   // Mobile drawer toggle
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -123,7 +140,7 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
   const [newEventVenue, setNewEventVenue] = useState('Seminar Hall A');
   const [newEventSpeaker, setNewEventSpeaker] = useState('');
   const [newEventOrganizer, setNewEventOrganizer] = useState('GIT Technical Wing');
-  const [newEventCapacity, setNewEventCapacity] = useState(100);
+  const [newEventCapacity, setNewEventCapacity] = useState('100');
   const [newEventDeadline, setNewEventDeadline] = useState('2026-11-04');
   const [newEventDescription, setNewEventDescription] = useState('');
 
@@ -174,20 +191,20 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
   // Navigation Items (Exact Phase 1 Specification)
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'members', label: 'Members', icon: Users, perm: true },
-    { id: 'promotions', label: 'Leadership & Promotions', icon: Crown, perm: canPromote, badge: 'LEAD' },
-    { id: 'events', label: 'Events', icon: Calendar, perm: true },
-    { id: 'registrations', label: 'Registrations', icon: Ticket, perm: true },
-    { id: 'attendance', label: 'Attendance', icon: CheckCircle2, perm: true },
-    { id: 'projects', label: 'Projects', icon: Code, perm: true },
-    { id: 'tasks', label: 'Tasks', icon: Clock, perm: true },
-    { id: 'announcements', label: 'Announcements', icon: Megaphone, perm: true },
-    { id: 'approvals', label: 'Approvals', icon: FileCheck, perm: canApproveFaculty, badge: events.filter(e => e.facultyApprovalStatus === 'Pending').length || undefined },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3, perm: true },
-    { id: 'notifications', label: 'Notifications', icon: Bell, perm: true, badge: notifications.filter(n => !n.read).length || undefined },
-    { id: 'handover', label: 'Handover', icon: BookOpen, perm: true },
-    { id: 'settings', label: 'Settings', icon: Settings, perm: true },
-  ].filter(item => item.perm);
+    { id: 'members', label: 'Members', icon: Users },
+    { id: 'promotions', label: 'Leadership & Promotions', icon: Crown, badge: promotionRequests?.filter(r => r.status !== 'Approved').length || undefined },
+    { id: 'events', label: 'Events', icon: Calendar },
+    { id: 'approvals', label: 'Approvals', icon: FileCheck, badge: events.filter(e => e.facultyApprovalStatus === 'Pending').length || undefined },
+    { id: 'registrations', label: 'Registrations', icon: Ticket, badge: registrations.length || undefined },
+    { id: 'attendance', label: 'Attendance', icon: CheckCircle2 },
+    { id: 'projects', label: 'Projects', icon: Code },
+    { id: 'tasks', label: 'Tasks', icon: Clock },
+    { id: 'announcements', label: 'Announcements', icon: Megaphone },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'notifications', label: 'Notifications', icon: Bell, badge: notifications.filter(n => !n.read).length || undefined },
+    { id: 'handover', label: 'Handover', icon: BookOpen },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ].filter(item => canAccessCommandTab(item.id, currentUserRole));
 
   // Dynamic alerts for "Needs Attention" (Phase 2 & Phase 14)
   const attentionItems: { title: string; desc: string; type: 'warning' | 'urgent' | 'info'; actionTab: string }[] = [];
@@ -289,24 +306,18 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
             </button>
           </div>
 
-          {/* Role Switcher (Prototype Role-Aware Demo) */}
-          <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl space-y-1">
+          {/* AUTHORIZED ROLE (Strictly Read-Only Display - No Switching or Selection) */}
+          <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl space-y-1">
             <div className="flex items-center justify-between text-[10px] font-mono text-[var(--text-subtle)]">
               <span>AUTHORIZED ROLE</span>
-              <span className="text-emerald-400 font-bold">ACTIVE</span>
+              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Active
+              </span>
             </div>
-            <select
-              value={currentUserRole}
-              onChange={(e) => onChangeRole(e.target.value as Role)}
-              className="w-full text-xs font-bold text-indigo-300 bg-[var(--bg-surface)] border border-indigo-500/30 rounded-lg p-1.5 outline-none cursor-pointer"
-            >
-              <option value="Admin / Club Head">Admin / Club Head</option>
-              <option value="Student Representative">Student Representative</option>
-              <option value="Committee Head">Committee Head</option>
-              <option value="Event Lead">Event Lead</option>
-              <option value="Project Lead">Project Lead</option>
-              <option value="Committee Member">Committee Member</option>
-            </select>
+            <div className="text-xs font-bold text-indigo-300 font-mono flex items-center gap-1.5 py-0.5">
+              <Shield className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <span className="truncate">{currentUserRole}</span>
+            </div>
           </div>
 
           {/* Navigation Links */}
@@ -345,12 +356,12 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
         <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             <img
-              src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80"
+              src={currentUserAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"}
               alt="Avatar"
               className="w-8 h-8 rounded-lg object-cover border border-purple-500/40 shrink-0"
             />
             <div className="truncate">
-              <h4 className="text-xs font-bold truncate">Ananya Verma</h4>
+              <h4 className="text-xs font-bold truncate">{currentUserName}</h4>
               <span className="text-[10px] text-[var(--text-subtle)] font-mono block truncate">{currentUserRole}</span>
             </div>
           </div>
@@ -387,7 +398,7 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
                 placeholder="Search events, members, tasks..."
                 value={globalSearch}
                 onChange={(e) => setGlobalSearch(e.target.value)}
-                className="w-full !pl-8 !pr-3 !py-1.5 text-xs bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl"
+                className="w-full !pl-8 !pr-3 search-input-pill"
               />
             </div>
           </div>
@@ -446,7 +457,7 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h1 className="text-2xl sm:text-3xl font-black">
-                    Good morning, <span className="gradient-text">Ananya Verma</span>
+                    Good morning, <span className="gradient-text">{currentUserName}</span>
                   </h1>
                   <p className="text-xs text-[var(--text-muted)] mt-1">
                     Here's what needs your attention today across the GIT Club Operating System.
@@ -712,6 +723,7 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
                     {members
+                      .filter(m => !globalSearch.trim() || m.name.toLowerCase().includes(globalSearch.toLowerCase()) || m.email.toLowerCase().includes(globalSearch.toLowerCase()) || m.role.toLowerCase().includes(globalSearch.toLowerCase()) || m.team.toLowerCase().includes(globalSearch.toLowerCase()))
                       .filter(m => memberRoleFilter === 'All' || m.role === memberRoleFilter)
                       .filter(m => memberTeamFilter === 'All' || m.team === memberTeamFilter)
                       .filter(m => memberStatusFilter === 'All' || m.status === memberStatusFilter)
@@ -757,7 +769,18 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
             <LeadershipPromotions
               members={members}
               promotionHistory={promotionHistory}
+              promotionRequests={promotionRequests || []}
+              currentUser={{
+                id: 'curr-user',
+                name: currentUserName || 'Committee Officer',
+                email: 'officer@git.edu',
+                role: currentUserRole,
+                portal: 'committee'
+              }}
               onPromoteMember={onPromoteMember}
+              onApprovePromotionRequest={onApprovePromotionRequest}
+              onFacultyApprovePromotion={onFacultyApprovePromotion}
+              onRejectPromotionRequest={onRejectPromotionRequest}
             />
           )}
 
@@ -802,6 +825,7 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
               {/* Event Cards Grid */}
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {events
+                  .filter(e => !globalSearch.trim() || e.title.toLowerCase().includes(globalSearch.toLowerCase()) || e.description.toLowerCase().includes(globalSearch.toLowerCase()) || e.category.toLowerCase().includes(globalSearch.toLowerCase()))
                   .filter(e => eventStatusFilter === 'All' || e.status === eventStatusFilter)
                   .map((ev) => (
                     <div key={ev.id} className="glass-card border border-[var(--border-subtle)] overflow-hidden flex flex-col justify-between">
@@ -1056,7 +1080,7 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
               </div>
 
               {/* Attendance Stats */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <div className="glass-card p-4 border border-indigo-500/20 space-y-1">
                   <span className="text-[10px] font-mono text-[var(--text-subtle)] uppercase">Total Registered</span>
                   <div className="text-3xl font-black font-mono text-indigo-400">
@@ -1230,7 +1254,9 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
 
               {/* Task Cards Grid */}
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {tasks.map((tsk) => (
+                {tasks
+                .filter(t => !globalSearch.trim() || t.title.toLowerCase().includes(globalSearch.toLowerCase()) || t.assignee.toLowerCase().includes(globalSearch.toLowerCase()) || t.relatedName.toLowerCase().includes(globalSearch.toLowerCase()))
+                .map((tsk) => (
                   <div key={tsk.id} className="glass-card p-5 border border-[var(--border-subtle)] space-y-3 flex flex-col justify-between">
                     <div className="space-y-2">
                       <div className="flex justify-between items-center text-[10px] font-mono">
@@ -1527,6 +1553,22 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
                 </div>
 
                 <div className="p-4 bg-[var(--bg-surface)] rounded-xl border border-[var(--border-subtle)] space-y-2">
+                <div className="p-4 bg-[var(--bg-surface)] rounded-xl border border-rose-500/30 space-y-3">
+                  <div>
+                    <span className="font-bold block text-sm text-rose-400">Reset Demo Data</span>
+                    <p className="text-[var(--text-muted)] mt-1">
+                      Clear all locally registered passes, modified events, added members, and custom promotions back to initial synthetic seed data.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onResetData}
+                    className="px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Reset All Custom Data
+                  </button>
+                </div>
+
                   <span className="font-bold block text-sm">Local Client-Side Storage</span>
                   <p className="text-[var(--text-muted)]">
                     All created events, member promotions, registrations, and attendance updates persist across page reloads via centralized state sync.
@@ -1691,6 +1733,10 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
+                const nativeEvent = e.nativeEvent as any;
+                const isSubmittingForReview = nativeEvent?.submitter?.dataset?.action === 'review';
+                const parsedCapacity = Math.max(10, parseInt(newEventCapacity, 10) || 100);
+
                 onCreateEvent({
                   id: `e-${Date.now()}`,
                   title: newEventTitle,
@@ -1700,18 +1746,21 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
                   venue: newEventVenue,
                   speaker: newEventSpeaker || 'GIT Club Mentors',
                   organizer: newEventOrganizer,
-                  capacity: Number(newEventCapacity),
+                  submittedBy: currentUserRole,
+                  submittedById: 'curr-user',
+                  capacity: parsedCapacity,
                   registeredCount: 0,
                   deadline: newEventDeadline,
                   description: newEventDescription,
                   poster: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800&auto=format&fit=crop&q=80',
-                  status: 'Faculty Review',
+                  status: isSubmittingForReview ? 'Faculty Review' : 'Draft',
                   facultyApprovalStatus: 'Pending',
                   tags: [newEventCategory, 'Campus']
                 });
                 setShowCreateEventModal(false);
                 setNewEventTitle('');
                 setNewEventDescription('');
+                setNewEventCapacity('100');
               }}
               className="space-y-3 text-xs"
             >
@@ -1771,11 +1820,17 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-mono text-[var(--text-subtle)]">Capacity</label>
+                  <label className="font-mono text-[var(--text-subtle)]">Capacity (Attendees)</label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    placeholder="e.g. 100"
                     value={newEventCapacity}
-                    onChange={(e) => setNewEventCapacity(Number(e.target.value))}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9]/g, '');
+                      setNewEventCapacity(val);
+                    }}
                     className="w-full text-xs"
                   />
                 </div>
@@ -1805,7 +1860,15 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
               <div className="flex gap-2 pt-2">
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl"
+                  data-action="draft"
+                  className="flex-1 py-2.5 bg-[var(--bg-surface)] hover:bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-main)] font-bold rounded-xl"
+                >
+                  Save as Draft
+                </button>
+                <button
+                  type="submit"
+                  data-action="review"
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow"
                 >
                   Submit for Faculty Approval
                 </button>
@@ -2030,7 +2093,7 @@ export const CommitteeCommandCenter: React.FC<CommandCenterProps> = ({
                   category: newAnnCategory,
                   targetAudience: newAnnAudience,
                   date: new Date().toISOString().split('T')[0],
-                  author: 'Ananya Verma',
+                  author: currentUserName,
                   authorRole: 'Club Head',
                   status: 'Published'
                 });

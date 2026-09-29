@@ -1,10 +1,14 @@
 export type Role =
+  | 'Participant'
   | 'Admin / Club Head'
-  | 'Student Representative'
-  | 'Committee Head'
+  | 'Member'
+  | 'Committee Member'
   | 'Event Lead'
   | 'Project Lead'
-  | 'Committee Member';
+  | 'Committee Head'
+  | 'Club Head / Admin'
+  | 'Student Representative'
+  | 'Faculty Coordinator';
 
 export type MemberStatus = 'Applicant' | 'Active' | 'Committee' | 'Alumni' | 'Inactive';
 
@@ -16,10 +20,22 @@ export type TeamType =
   | 'Logistics'
   | 'Operations';
 
+export interface UserSession {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  portal: 'public' | 'participant' | 'committee';
+  studentId?: string;
+  branch?: string;
+  year?: string;
+  avatar?: string;
+}
+
 export interface Member {
   id: string;
   name: string;
-  role: 'Student Representative' | 'Club Head' | 'Committee Head' | 'Committee Member' | 'Member';
+  role: 'Student Representative' | 'Club Head' | 'Committee Head' | 'Event Lead' | 'Project Lead' | 'Committee Member' | 'Member';
   department: string;
   year: '1st Year' | '2nd Year' | '3rd Year' | '4th Year';
   branch: string;
@@ -44,6 +60,35 @@ export interface Member {
   };
 }
 
+export type PromotionStatus =
+  | 'Draft'
+  | 'Pending Committee Review'
+  | 'Pending Faculty Approval'
+  | 'Approved'
+  | 'Rejected'
+  | 'Changes Requested'
+  | 'Cancelled';
+
+export interface PromotionRequest {
+  id: string;
+  memberId: string;
+  memberName: string;
+  memberAvatar: string;
+  currentRole: Member['role'];
+  targetRole: Member['role'];
+  reason: string;
+  effectiveDate: string;
+  proposedBy: string;
+  proposedById: string;
+  status: PromotionStatus;
+  committeeReviewer?: string;
+  committeeRemarks?: string;
+  facultyReviewer?: string;
+  facultyRemarks?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PromotionHistory {
   id: string;
   memberId: string;
@@ -54,11 +99,14 @@ export interface PromotionHistory {
   reason: string;
   date: string;
   promotedBy: string;
+  approvedByFaculty?: string;
 }
 
 export type EventStatus =
   | 'Draft'
   | 'Faculty Review'
+  | 'Submitted'
+  | 'Pending Faculty Review'
   | 'Approved'
   | 'Published'
   | 'Registration Open'
@@ -79,6 +127,8 @@ export interface EventItem {
   venue: string;
   speaker: string;
   organizer: string;
+  submittedBy?: string;
+  submittedById?: string;
   description: string;
   poster: string;
   registeredCount: number;
@@ -98,6 +148,9 @@ export interface TicketData {
   registrationId: string;
   participantName: string;
   participantEmail: string;
+  studentId?: string;
+  branch?: string;
+  year?: string;
   eventName: string;
   eventDate: string;
   eventTime: string;
@@ -113,6 +166,7 @@ export interface EventRegistration {
   eventTitle: string;
   userName: string;
   userEmail: string;
+  studentId?: string;
   branch: string;
   year: string;
   registrationDate: string;

@@ -8,12 +8,17 @@ import { EventDetailPage } from './components/EventDetailPage';
 import { ProjectsPage, FacultyPage, AchievementsPage, HistoryPage, AnnouncementsPage } from './components/PublicSubPages';
 import { ParticipantPortal } from './components/ParticipantPortal';
 import { CommitteeCommandCenter } from './components/CommitteeCommandCenter';
-import { LoginModal, EventRegisterModal, PromotionModal } from './components/Modals';
+import { LoginModal, EventRegisterModal, PromotionModal, ReAuthModal } from './components/Modals';
+import { RegistrationSuccessModal } from './components/RegistrationSuccessModal';
+import { canAccessCommandCenter, canAccessCommandTab, canFacultyApprove } from './utils/permissions';
+import { authenticateUser } from './data/authDirectory';
+import { normalizeEmail, isSameEmail } from './utils/identity';
+import { isRegistrationOpen } from './utils/eventStatus';
 import { downloadTicketClientSide } from './utils/ticketGenerator';
 import { Button } from './components/ui';
 import {
   Home, Calendar, Layers, BookOpen, Users, Megaphone,
-  GraduationCap, ShieldCheck, LogOut, LogIn, Search, Bell
+  GraduationCap, ShieldCheck, LogOut, LogIn, Search, Bell, Menu, X
 } from 'lucide-react';
 
 import {
@@ -35,7 +40,7 @@ import {
 import {
   Member, EventItem, ProjectItem, AchievementItem, AnnouncementItem,
   EventRegistration, PromotionHistory, Role, CommitteeTask, CommitteeHandoverRecord,
-  ActivityItem, TicketData
+  ActivityItem, TicketData, PromotionRequest, UserSession
 } from './types';
 
 // Central localStorage persistence helper (Phase 17)
@@ -62,10 +67,16 @@ function useLocalState<T>(key: string, initialValue: T): [T, React.Dispatch<Reac
 
 export function App() {
   // Theme State (Dark by default)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
   // Navigation State
-  const [currentView, setCurrentView] = useState<string>('home');
+  // Hash-based Deep Linking & Browser History Navigation (BUG-MED-01)
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [currentView, setCurrentView] = useState<string>(() => {
+    const hash = window.location.hash.replace(/^#[\/]?/, '').trim();
+    return hash || 'home';
+  });
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
   // Participant Portal Sub-Tab State
@@ -75,12 +86,27 @@ export function App() {
   const [commandTab, setCommandTab] = useState<string>('dashboard');
 
   // Authentication State
-  const [currentUser, setCurrentUser] = useState<{
-    name: string;
-    email: string;
-    role: Role;
-    portal: 'public' | 'participant' | 'committee';
-  } | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+  const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
+  const [completedTicket, setCompletedTicket] = useState<TicketData | null>(null);
+  const [reAuthAction, setReAuthAction] = useState<{ actionName: string; desc: string; onVerified: () => void } | null>(null);
+  const [promotionRequests, setPromotionRequests] = useLocalState<PromotionRequest[]>('promotion_requests', [
+    {
+      id: 'pr-1',
+      memberId: 'm-6',
+      memberName: 'Sneha Patil',
+      memberAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+      currentRole: 'Committee Member',
+      targetRole: 'Committee Head',
+      reason: 'Outstanding performance leading the GIT Hack 2.0 web infrastructure.',
+      effectiveDate: '2026-11-01',
+      proposedBy: 'Ananya Verma',
+      proposedById: 'usr-ananyaverma',
+      status: 'Pending Committee Review',
+      createdAt: '2026-09-28',
+      updatedAt: '2026-09-28'
+    }
+  ]);
 
   // Synchronized Datasets with localStorage persistence (Phase 17)
   const [members, setMembers] = useLocalState<Member[]>('members', INITIAL_MEMBERS);
@@ -100,6 +126,23 @@ export function App() {
   const [registeringEvent, setRegisteringEvent] = useState<EventItem | null>(null);
   const [promotingMember, setPromotingMember] = useState<Member | null>(null);
 
+  const handleResetData = () => {
+    if (window.confirm('Are you sure you want to reset all data back to original defaults? This will clear custom registrations, created events, and nominations.')) {
+      const keysToClear = ['members', 'events', 'projects', 'announcements', 'registrations', 'notifications', 'promotions_history', 'tasks', 'handover', 'activities', 'promotion_requests'];
+      keysToClear.forEach(k => localStorage.removeItem(`gitclub_${k}`));
+      window.location.reload();
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('gitclub_auth_email');
+    sessionStorage.removeItem('gitclub_auth_portal');
+    sessionStorage.removeItem('gitclub_session_token');
+    setCurrentUser(null);
+    setCurrentView('home');
+    window.location.hash = 'home';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
   // Theme Toggle Handler
   const toggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
@@ -108,7 +151,30 @@ export function App() {
   };
 
   // View Navigation Handler
+  // Browser History & Popstate synchronization
+  useEffect(() => {
+    const handlePopState = () => {
+      const hash = window.location.hash.replace(/^#[\/]?/, '').trim() || 'home';
+      // Route protection check on popstate
+      if (hash === 'admin-dashboard') {
+        const savedEmail = sessionStorage.getItem('gitclub_auth_email');
+        const savedPortal = sessionStorage.getItem('gitclub_auth_portal') as any;
+        const verified = savedEmail ? authenticateUser(savedEmail, savedPortal) : null;
+        if (!verified || !canAccessCommandCenter(verified.role)) {
+          setCurrentView(verified ? 'participant-dashboard' : 'home');
+          window.location.hash = verified ? '#participant-dashboard' : '#home';
+          return;
+        }
+      }
+      setCurrentView(hash);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const handleNavigate = (view: string, detailId?: string) => {
+    setMobileNavOpen(false);
     setCurrentView(view);
     if (detailId) setSelectedEventId(detailId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -118,19 +184,24 @@ export function App() {
   const handleLoginSuccess = (portal: 'participant' | 'committee') => {
     if (portal === 'committee') {
       setCurrentUser({
+        id: 'usr-ananyaverma',
         name: 'Ananya Verma',
         email: 'ananya.v@git.edu',
-        role: 'Admin / Club Head',
+        role: 'Club Head / Admin',
         portal: 'committee'
       });
       setCurrentView('admin-dashboard');
       setCommandTab('dashboard');
     } else {
       setCurrentUser({
+        id: 'usr-karthik',
         name: 'Karthik Raja',
         email: 'karthik.r@git.edu',
-        role: 'Committee Member',
-        portal: 'participant'
+        role: 'Participant',
+        portal: 'participant',
+        studentId: 'GIT2023CSE042',
+        branch: 'Computer Science & Engineering',
+        year: '3rd Year'
       });
       setCurrentView('participant-dashboard');
     }
@@ -200,7 +271,7 @@ export function App() {
 
     // Check duplicate registration
     const alreadyRegistered = registrations.some(
-      r => r.eventId === registeringEvent.id && r.userEmail.toLowerCase() === participantData.email.toLowerCase()
+      r => r.eventId === registeringEvent.id && isSameEmail(r.userEmail, participantData.email)
     );
     if (alreadyRegistered) {
       alert('You are already registered for this event!');
@@ -282,6 +353,137 @@ export function App() {
       },
       ...prev
     ]);
+    // 5. Present Registration Success Modal with celebration
+    setCompletedTicket(ticketPayload);
+    setRegisteringEvent(null);
+  };
+
+
+  // Promotion Workflow Step 1: Submit Proposal
+  const handleProposalSubmit = (proposal: {
+    member: Member;
+    targetRole: Member['role'];
+    reason: string;
+    effectiveDate: string;
+  }) => {
+    if (!currentUser) return;
+    const newReq: PromotionRequest = {
+      id: `pr-${Date.now()}`,
+      memberId: proposal.member.id,
+      memberName: proposal.member.name,
+      memberAvatar: proposal.member.avatar,
+      currentRole: proposal.member.role,
+      targetRole: proposal.targetRole,
+      reason: proposal.reason,
+      effectiveDate: proposal.effectiveDate,
+      proposedBy: currentUser.name,
+      proposedById: currentUser.id,
+      status: 'Pending Committee Review',
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString().split('T')[0]
+    };
+    setPromotionRequests((prev) => [newReq, ...prev]);
+    setActivities((prev) => [
+      {
+        id: `act-${Date.now()}`,
+        action: 'Promotion Nominated',
+        details: `${proposal.member.name} nominated for ${proposal.targetRole} by ${currentUser.name}`,
+        timestamp: 'Just now',
+        user: currentUser.name,
+        category: 'promotion'
+      },
+      ...prev
+    ]);
+  };
+
+  // Promotion Workflow Step 2: Committee Endorsement
+  const handleCommitteeEndorsePromotion = (reqId: string, remarks?: string) => {
+    setPromotionRequests((prev) =>
+      prev.map((r) =>
+        r.id === reqId
+          ? {
+              ...r,
+              status: 'Pending Faculty Approval',
+              committeeReviewer: currentUser?.name || 'Executive Committee',
+              committeeRemarks: remarks || 'Endorsed by Committee',
+              updatedAt: new Date().toISOString().split('T')[0]
+            }
+          : r
+      )
+    );
+  };
+
+  // Promotion Workflow Step 3: Faculty Final Sign-Off
+  const handleFacultyApprovePromotion = (reqId: string, remarks?: string) => {
+    const req = promotionRequests.find((r) => r.id === reqId);
+    if (!req) return;
+
+    // Trigger re-authentication for sensitive institutional elevation
+    setReAuthAction({
+      actionName: 'Faculty Promotion Sign-Off',
+      desc: `Grant official elevation of ${req.memberName} to ${req.targetRole}`,
+      onVerified: () => {
+        // 1. Update Member Record officially
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.id === req.memberId
+              ? {
+                  ...m,
+                  role: req.targetRole,
+                  readyForPromotion: false,
+                  promotionRecommendation: undefined
+                }
+              : m
+          )
+        );
+
+        // 2. Mark request approved
+        setPromotionRequests((prev) =>
+          prev.map((r) =>
+            r.id === reqId
+              ? {
+                  ...r,
+                  status: 'Approved',
+                  facultyReviewer: currentUser?.name || 'Dr. Suresh V. Patil',
+                  facultyRemarks: remarks || 'Faculty clearance granted.',
+                  updatedAt: new Date().toISOString().split('T')[0]
+                }
+              : r
+          )
+        );
+
+        // 3. Record in audit history
+        const newHist: PromotionHistory = {
+          id: `ph-${Date.now()}`,
+          memberId: req.memberId,
+          memberName: req.memberName,
+          memberAvatar: req.memberAvatar,
+          fromRole: req.currentRole,
+          toRole: req.targetRole,
+          reason: req.reason,
+          date: new Date().toISOString().split('T')[0],
+          promotedBy: req.proposedBy,
+          approvedByFaculty: currentUser?.name || 'Dr. Suresh V. Patil'
+        };
+        setPromotionHistory((prev) => [newHist, ...prev]);
+      }
+    });
+  };
+
+  // Promotion Workflow: Reject Request
+  const handleRejectPromotion = (reqId: string, remarks?: string) => {
+    setPromotionRequests((prev) =>
+      prev.map((r) =>
+        r.id === reqId
+          ? {
+              ...r,
+              status: 'Rejected',
+              facultyRemarks: remarks || 'Declined',
+              updatedAt: new Date().toISOString().split('T')[0]
+            }
+          : r
+      )
+    );
   };
 
   const selectedEvent = events.find((e) => e.id === selectedEventId) || events[0];
@@ -290,7 +492,8 @@ export function App() {
     <div className="app-frame min-h-screen text-[var(--text-main)] font-sans">
       <div className="app-shell">
         {/* Left Charcoal Icon-only Sidebar (64px) */}
-        <aside className="app-sidebar" aria-label="Main Navigation">
+        {mobileNavOpen && <div className="mobile-nav-backdrop md:hidden" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />}
+        <aside className={`app-sidebar ${mobileNavOpen ? "mobile-open" : "mobile-closed"} md:translate-x-0`} aria-label="Main Navigation">
           <button
             onClick={() => handleNavigate('home')}
             className="sidebar-item"
@@ -379,7 +582,7 @@ export function App() {
           {/* Logout / Login pinned to bottom */}
           {currentUser ? (
             <button
-              onClick={() => { setCurrentUser(null); handleNavigate('home'); }}
+              onClick={() => { handleLogout(); }}
               className="sidebar-item"
               title="Sign Out"
               aria-label="Sign Out"
@@ -400,10 +603,31 @@ export function App() {
 
         {/* Right Content Area */}
         <div className="app-main flex flex-col min-w-0 flex-1">
+          {accessDeniedMessage && (
+            <div className="mb-4 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center justify-between animate-in fade-in duration-200">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>{accessDeniedMessage}</span>
+              </div>
+              <button
+                onClick={() => setAccessDeniedMessage(null)}
+                className="text-rose-400 hover:text-white font-bold px-2 py-1"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           {/* Top Bar matching reference */}
           <header className="flex items-center justify-between gap-4 pb-5 mb-6 border-b border-[var(--border-subtle)]">
             {/* Left: "Welcome to" muted + brand name in coral */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-2.5 shrink-0">
+              <button
+                onClick={() => setMobileNavOpen(!mobileNavOpen)}
+                className="md:hidden p-1.5 rounded-lg border border-[var(--border-subtle)] text-[var(--text-main)] hover:bg-[var(--bg-card)] transition-colors"
+                aria-label="Toggle navigation menu"
+              >
+                {mobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
               <span className="text-[var(--text-muted)] text-xs sm:text-sm font-medium">Welcome to</span>
               <span className="text-[var(--coral)] font-bold text-sm sm:text-base font-mono">GIT Club</span>
             </div>
@@ -413,8 +637,15 @@ export function App() {
               <input
                 type="text"
                 placeholder="Search events, courses, tracks..."
-                className="w-full text-xs text-[var(--ink)] placeholder:text-[var(--text-muted)] outline-none"
-                onClick={() => { if (currentView !== 'events') handleNavigate('events'); }}
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (currentView !== 'events') handleNavigate('events');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && currentView !== 'events') handleNavigate('events');
+                }}
+                className="w-full text-xs text-[var(--ink)] placeholder:text-[var(--text-muted)] outline-none bg-transparent"
               />
               <button
                 onClick={() => { if (currentView !== 'events') handleNavigate('events'); }}
@@ -537,7 +768,8 @@ export function App() {
             registrations={registrations}
             notifications={notifications}
             onOpenRegisterModal={(e) => setRegisteringEvent(e)}
-            onLogout={() => { setCurrentUser(null); handleNavigate('home'); }}
+            onLogout={() => { handleLogout(); }}
+            onResetData={handleResetData}
           />
         )}
 
@@ -546,10 +778,14 @@ export function App() {
           <CommitteeCommandCenter
             currentTab={commandTab}
             onNavigateTab={(tab) => setCommandTab(tab)}
-            currentUserRole={currentUser?.role || 'Admin / Club Head'}
-            onChangeRole={(newRole) => {
-              if (currentUser) setCurrentUser({ ...currentUser, role: newRole });
-            }}
+            currentUserRole={currentUser?.role || 'Club Head / Admin'}
+            currentUserName={currentUser?.name || 'Committee Officer'}
+            currentUserAvatar={currentUser?.avatar}
+            promotionRequests={promotionRequests}
+            onApprovePromotionRequest={handleCommitteeEndorsePromotion}
+            onFacultyApprovePromotion={handleFacultyApprovePromotion}
+            onRejectPromotionRequest={handleRejectPromotion}
+            onTriggerReAuth={(name, desc, onVerified) => setReAuthAction({ actionName: name, desc, onVerified })}
             theme={theme}
             onToggleTheme={toggleTheme}
             members={members}
@@ -713,8 +949,7 @@ export function App() {
             }}
             activities={activities}
             onLogout={() => {
-              setCurrentUser(null);
-              handleNavigate('home');
+              handleLogout();
             }}
           />
         )}
@@ -744,26 +979,64 @@ export function App() {
         <LoginModal
           portal={loginModalPortal}
           onClose={() => setLoginModalPortal(null)}
-          onLoginSuccess={handleLoginSuccess}
+          onLoginSuccess={(user: UserSession) => {
+            setCurrentUser(user);
+            sessionStorage.setItem('gitclub_auth_email', user.email);
+            sessionStorage.setItem('gitclub_auth_portal', user.portal);
+            sessionStorage.setItem('gitclub_session_token', 'sess-' + Date.now());
+            if (user.portal === 'participant') {
+              setCurrentView('participant-dashboard');
+              setParticipantTab('dash');
+            } else {
+              setCurrentView('admin-dashboard');
+              setCommandTab('dashboard');
+            }
+            window.location.hash = user.portal === 'participant' ? 'participant-dashboard' : 'admin-dashboard';
+            setLoginModalPortal(null);
+          }}
         />
       )}
 
       {registeringEvent && (
         <EventRegisterModal
           event={registeringEvent}
+          currentUser={currentUser}
           onClose={() => setRegisteringEvent(null)}
+          onRequireLogin={() => setLoginModalPortal('participant')}
           onConfirm={handleConfirmRegistration}
         />
       )}
-
-      {promotingMember && (
-        <PromotionModal
-          member={promotingMember}
-          onClose={() => setPromotingMember(null)}
-          onConfirm={handleConfirmPromotion}
+      {completedTicket && (
+        <RegistrationSuccessModal
+          ticket={completedTicket}
+          onClose={() => setCompletedTicket(null)}
+          onViewInPortal={() => {
+            setCurrentView('participant-dashboard');
+            setParticipantTab('my-tickets');
+          }}
         />
       )}
-
+      {promotingMember && currentUser && (
+        <PromotionModal
+          member={promotingMember}
+          currentUser={currentUser}
+          onClose={() => setPromotingMember(null)}
+          onSubmitProposal={handleProposalSubmit}
+        />
+      )}
+      {reAuthAction && currentUser && (
+        <ReAuthModal
+          currentUser={currentUser}
+          actionName={reAuthAction.actionName}
+          actionDescription={reAuthAction.desc}
+          onClose={() => setReAuthAction(null)}
+          onVerified={() => {
+            const cb = reAuthAction.onVerified;
+            setReAuthAction(null);
+            cb();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import { EventItem } from '../types';
 import { Clock, MapPin, Users, ArrowLeft, ArrowRight } from 'lucide-react';
 import { Card, Badge, Button } from './ui';
+import { isRegistrationOpen } from '../utils/eventStatus';
 
 interface EventDetailPageProps {
   event: EventItem;
@@ -10,7 +11,7 @@ interface EventDetailPageProps {
 }
 
 export const EventDetailPage: React.FC<EventDetailPageProps> = ({ event, onNavigate, onOpenRegisterModal }) => {
-  const isUpcoming = event.status === 'Upcoming' || event.status === 'Published';
+  const isUpcoming = isRegistrationOpen(event);
   const seatsLeft = Math.max(0, event.capacity - event.registeredCount);
 
   return (

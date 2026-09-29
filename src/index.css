@@ -740,3 +740,62 @@ input[type="radio"] {
     scroll-behavior: auto !important;
   }
 }
+/* RESPONSIVE ADDITIONS */
+@media (max-width: 640px) {
+  .modal-overlay { padding: 0.5rem; }
+  .modal-content { max-height: 92vh; width: 100% !important; border-radius: var(--radius-lg); }
+  .search-pill { display: none; }
+}
+@media print {
+  .app-sidebar, nav, header, footer, button, aside { display: none !important; }
+  body, .app-frame, .app-shell, .app-main { background: #fff !important; padding: 0 !important; margin: 0 !important; }
+}
+
+/* Mobile & Responsive Drawer Sidebar Rules */
+@media (max-width: 768px) {
+  .app-frame { padding: 0.5rem !important; }
+  .app-shell { border-radius: var(--radius-lg); flex-direction: column; }
+  .app-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .app-sidebar.mobile-closed {
+    transform: translateX(-100%);
+  }
+  .app-sidebar.mobile-open {
+    transform: translateX(0);
+  }
+  .mobile-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(2px);
+    z-index: 55;
+  }
+}
+
+/* Consistent pill search inputs across pages */
+.search-input-pill {
+  border-radius: 9999px !important;
+  border: 1.5px solid var(--ink) !important;
+  background-color: var(--bg-card) !important;
+  color: var(--ink) !important;
+  padding-left: 2.75rem !important;
+  padding-right: 1rem !important;
+  padding-top: 0.45rem !important;
+  padding-bottom: 0.45rem !important;
+  font-size: 0.8125rem !important;
+  line-height: 1.25rem !important;
+  box-sizing: border-box !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease !important;
+}
+.search-input-pill:focus {
+  border-color: var(--ink) !important;
+  box-shadow: 0 0 0 2px rgba(31, 31, 31, 0.12) !important;
+  background-color: #ffffff !important;
+}
